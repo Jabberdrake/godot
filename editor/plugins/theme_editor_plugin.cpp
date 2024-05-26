@@ -39,6 +39,7 @@
 #include "editor/editor_undo_redo_manager.h"
 #include "editor/gui/editor_bottom_panel.h"
 #include "editor/gui/editor_file_dialog.h"
+#include "editor/editor_file_system.h"
 #include "editor/inspector_dock.h"
 #include "editor/progress_dialog.h"
 #include "editor/themes/editor_scale.h"
@@ -3664,6 +3665,60 @@ void ThemeEditor::_preview_control_picked(String p_class_name) {
 	theme_type_editor->select_type(p_class_name);
 }
 
+bool ThemeEditor::can_drop_data_fw(const Point2 &p_point, const Variant &p_data, Control *p_from) {
+	Dictionary d = p_data;
+	if (!d.has("type")) {
+		return false;
+	}
+
+	if(String(d["type"]) == "files") {
+		Vector<String> files = d["files"];
+
+		if (files.size() != 1) {
+			return false;
+		}
+
+		String ftype = EditorFileSystem::get_singleton()->get_file_type(files[0]);
+		if (ftype != "PackedScene") {
+			return false;
+		}
+		return true;
+	}
+	return false;
+}
+
+void ThemeEditor::drop_data_fw(const Point2 &p_point, const Variant &p_data, Control *p_from) {
+	if (!can_drop_data_fw(p_point, p_data, p_from)) {
+		return;
+	}
+
+	Dictionary d = p_data;
+	if (String(d["type"]) == "files") {
+		Vector<String> files = d["files"];
+		const String &path = files[0];
+
+		SceneThemeEditorPreview *preview_tab = memnew(SceneThemeEditorPreview);
+		if (!preview_tab->set_preview_scene(path)) {
+			return;
+		}
+
+		const Ref<Texture2D> icon = get_editor_theme_icon(SNAME("PackedScene"));
+
+		preview_tab->set_preview_theme(theme);
+
+		preview_tabs->add_tab(path.get_file(), icon);
+		preview_tabs_content->add_child(preview_tab);
+		preview_tabs->set_tab_button_icon(preview_tabs->get_tab_count() - 1, EditorNode::get_singleton()->get_editor_theme()->get_icon(SNAME("close"), SNAME("TabBar")));
+		preview_tab->connect("control_picked", callable_mp(this, &ThemeEditor::_preview_control_picked));
+
+		preview_tabs->set_current_tab(preview_tabs->get_tab_count() - 1);
+		
+		preview_tab->connect("scene_invalidated", callable_mp(this, &ThemeEditor::_remove_preview_tab_invalid).bind(preview_tab));
+		preview_tab->connect("scene_reloaded", callable_mp(this, &ThemeEditor::_update_preview_tab).bind(preview_tab));
+	}
+	return;
+}
+
 void ThemeEditor::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE:
@@ -3679,6 +3734,7 @@ void ThemeEditor::_notification(int p_what) {
 
 ThemeEditor::ThemeEditor() {
 	HBoxContainer *top_menu = memnew(HBoxContainer);
+	SET_DRAG_FORWARDING_CD(top_menu, ThemeEditor);
 	add_child(top_menu);
 
 	theme_name = memnew(Label);
@@ -3692,18 +3748,21 @@ ThemeEditor::ThemeEditor() {
 	theme_save_button->set_text(TTR("Save"));
 	theme_save_button->set_flat(true);
 	theme_save_button->connect(SceneStringName(pressed), callable_mp(this, &ThemeEditor::_theme_save_button_cbk).bind(false));
+	SET_DRAG_FORWARDING_CD(theme_save_button, ThemeEditor);
 	top_menu->add_child(theme_save_button);
 
 	Button *theme_save_as_button = memnew(Button);
 	theme_save_as_button->set_text(TTR("Save As..."));
 	theme_save_as_button->set_flat(true);
 	theme_save_as_button->connect(SceneStringName(pressed), callable_mp(this, &ThemeEditor::_theme_save_button_cbk).bind(true));
+	SET_DRAG_FORWARDING_CD(theme_save_as_button, ThemeEditor);
 	top_menu->add_child(theme_save_as_button);
 
 	Button *theme_close_button = memnew(Button);
 	theme_close_button->set_text(TTR("Close"));
 	theme_close_button->set_flat(true);
 	theme_close_button->connect(SceneStringName(pressed), callable_mp(this, &ThemeEditor::_theme_close_button_cbk));
+	SET_DRAG_FORWARDING_CD(theme_close_button, ThemeEditor);
 	top_menu->add_child(theme_close_button);
 
 	top_menu->add_child(memnew(VSeparator));
@@ -3713,6 +3772,7 @@ ThemeEditor::ThemeEditor() {
 	theme_edit_button->set_tooltip_text(TTR("Add, remove, organize and import Theme items."));
 	theme_edit_button->set_flat(true);
 	theme_edit_button->connect(SceneStringName(pressed), callable_mp(this, &ThemeEditor::_theme_edit_button_cbk));
+	SET_DRAG_FORWARDING_CD(theme_edit_button, ThemeEditor);
 	top_menu->add_child(theme_edit_button);
 
 	theme_type_editor = memnew(ThemeTypeEditor);
@@ -3723,22 +3783,27 @@ ThemeEditor::ThemeEditor() {
 
 	HSplitContainer *main_hs = memnew(HSplitContainer);
 	main_hs->set_v_size_flags(SIZE_EXPAND_FILL);
+	SET_DRAG_FORWARDING_CD(main_hs, ThemeEditor);
 	add_child(main_hs);
 
 	VBoxContainer *preview_tabs_vb = memnew(VBoxContainer);
 	preview_tabs_vb->set_h_size_flags(SIZE_EXPAND_FILL);
 	preview_tabs_vb->set_custom_minimum_size(Size2(520, 0) * EDSCALE);
 	preview_tabs_vb->add_theme_constant_override("separation", 2 * EDSCALE);
+	SET_DRAG_FORWARDING_CD(preview_tabs_vb, ThemeEditor);
 	main_hs->add_child(preview_tabs_vb);
 	HBoxContainer *preview_tabbar_hb = memnew(HBoxContainer);
+	SET_DRAG_FORWARDING_CD(preview_tabbar_hb, ThemeEditor);
 	preview_tabs_vb->add_child(preview_tabbar_hb);
 	preview_tabs_content = memnew(PanelContainer);
 	preview_tabs_content->set_v_size_flags(SIZE_EXPAND_FILL);
 	preview_tabs_content->set_draw_behind_parent(true);
+	SET_DRAG_FORWARDING_CD(preview_tabs_content, ThemeEditor);
 	preview_tabs_vb->add_child(preview_tabs_content);
 
 	preview_tabs = memnew(TabBar);
 	preview_tabs->set_h_size_flags(SIZE_EXPAND_FILL);
+	SET_DRAG_FORWARDING_CD(preview_tabs, ThemeEditor);
 	preview_tabbar_hb->add_child(preview_tabs);
 	preview_tabs->connect("tab_changed", callable_mp(this, &ThemeEditor::_change_preview_tab));
 	preview_tabs->connect("tab_button_pressed", callable_mp(this, &ThemeEditor::_remove_preview_tab));
@@ -3747,10 +3812,12 @@ ThemeEditor::ThemeEditor() {
 	preview_tabbar_hb->add_child(add_preview_button_hb);
 	add_preview_button = memnew(Button);
 	add_preview_button->set_text(TTR("Add Preview"));
+	SET_DRAG_FORWARDING_CD(add_preview_button, ThemeEditor);
 	add_preview_button_hb->add_child(add_preview_button);
 	add_preview_button->connect(SceneStringName(pressed), callable_mp(this, &ThemeEditor::_add_preview_button_cbk));
 
 	DefaultThemeEditorPreview *default_preview_tab = memnew(DefaultThemeEditorPreview);
+	SET_DRAG_FORWARDING_CD(default_preview_tab, ThemeEditor);
 	preview_tabs_content->add_child(default_preview_tab);
 	default_preview_tab->connect("control_picked", callable_mp(this, &ThemeEditor::_preview_control_picked));
 	preview_tabs->add_tab(TTR("Default Preview"));
