@@ -39,6 +39,7 @@
 #include "editor/editor_undo_redo_manager.h"
 #include "editor/gui/editor_bottom_panel.h"
 #include "editor/gui/editor_file_dialog.h"
+#include "editor/editor_file_system.h"
 #include "editor/inspector_dock.h"
 #include "editor/progress_dialog.h"
 #include "editor/themes/editor_scale.h"
@@ -3664,6 +3665,60 @@ void ThemeEditor::_preview_control_picked(String p_class_name) {
 	theme_type_editor->select_type(p_class_name);
 }
 
+bool ThemeEditor::can_drop_data_fw(const Point2 &p_point, const Variant &p_data, Control *p_from) {
+	Dictionary d = p_data;
+	if (!d.has("type")) {
+		return false;
+	}
+
+	if (String(d["type"]) == "files") {
+		Vector<String> files = d["files"];
+
+		if (files.size() != 1) {
+			return false;
+		}
+
+		String ftype = EditorFileSystem::get_singleton()->get_file_type(files[0]);
+		if (ftype != "PackedScene") {
+			return false;
+		}
+		return true;
+	}
+	return false;
+}
+
+void ThemeEditor::drop_data_fw(const Point2 &p_point, const Variant &p_data, Control *p_from) {
+	if (!can_drop_data_fw(p_point, p_data, p_from)) {
+		return;
+	}
+
+	Dictionary d = p_data;
+	if (String(d["type"]) == "files") {
+		Vector<String> files = d["files"];
+		const String &path = files[0];
+
+		SceneThemeEditorPreview *preview_tab = memnew(SceneThemeEditorPreview);
+		if (!preview_tab->set_preview_scene(path)) {
+			return;
+		}
+
+		const Ref<Texture2D> icon = get_editor_theme_icon(SNAME("PackedScene"));
+
+		preview_tab->set_preview_theme(theme);
+
+		preview_tabs->add_tab(path.get_file(), icon);
+		preview_tabs_content->add_child(preview_tab);
+		preview_tabs->set_tab_button_icon(preview_tabs->get_tab_count() - 1, EditorNode::get_singleton()->get_editor_theme()->get_icon(SNAME("close"), SNAME("TabBar")));
+		preview_tab->connect("control_picked", callable_mp(this, &ThemeEditor::_preview_control_picked));
+
+		preview_tabs->set_current_tab(preview_tabs->get_tab_count() - 1);
+		
+		preview_tab->connect("scene_invalidated", callable_mp(this, &ThemeEditor::_remove_preview_tab_invalid).bind(preview_tab));
+		preview_tab->connect("scene_reloaded", callable_mp(this, &ThemeEditor::_update_preview_tab).bind(preview_tab));
+	}
+	return;
+}
+
 void ThemeEditor::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE:
@@ -3768,6 +3823,9 @@ ThemeEditor::ThemeEditor() {
 
 	main_hs->add_child(theme_type_editor);
 	theme_type_editor->set_custom_minimum_size(Size2(280, 0) * EDSCALE);
+
+	SET_DRAG_FORWARDING_CD(top_menu, ThemeEditor);
+	SET_DRAG_FORWARDING_CD(preview_tabs, ThemeEditor);
 }
 
 ///////////////////////
